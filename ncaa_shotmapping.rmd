@@ -4,16 +4,6 @@
 # Load the libraries
 library(sf) # Work with polygons
 library(tidyverse) # ggplot2 and dplyr 
-library(hoopR)
-```
-
-```{r}
-mbb_2021 <- load_mbb_pbp(seasons = 2021)
-```
-
-```{r}
-df <- mbb_2021 |> 
-  filter(type_text == "JumpShot")
 ```
 
 ```{r}
@@ -360,5 +350,4 @@ plot_court = function(court_theme = court_themes$light) {
 ```{r}
 plot_court(court_theme = court_themes$light)
 ```
-
 
