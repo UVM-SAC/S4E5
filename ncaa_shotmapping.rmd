@@ -3,7 +3,7 @@
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r, include=FALSE}
 # Load the libraries
 library(sf) # Work with polygons
 library(tidyverse) # ggplot2 and dplyr 
