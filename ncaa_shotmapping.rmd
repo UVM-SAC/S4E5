@@ -1,12 +1,13 @@
 
-
-```{r Load the libraries}
-# Load the libraries
-library(sf) # Work with polygons
-library(tidyverse) # ggplot2 and dplyr 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+# Load the libraries
+library(sf) # Work with polygons
+library(tidyverse) # ggplot2 and dplyr 
+
 # All lengths will be in feet
 line_thick = 0.15
 width = 50
@@ -28,9 +29,7 @@ three_point_side_height = sqrt(
   three_point_radius^2 - (three_point_side_offset - width/2)^2
   ) + hoop_center_y
 restricted_area_radius = 4
-```
 
-```{r}
 # Draw a rectangle that defines the half-court interior
 half_court_int <- rbind(
   c(0, 0),
@@ -52,18 +51,7 @@ half_court_ext <- rbind(
 # Define a sfg polygon object in sf by subtracting interior from exterior
 half_court <- st_polygon(list(half_court_ext, half_court_int))
 
-# Verify sfg class of polygon
-class(half_court)
-```
 
-```{r}
-# Plot the half-court rectangle to test our object
-ggplot() +
-  geom_sf(data = half_court) +
-  theme_classic() +
-  scale_x_continuous(breaks = seq(from = 0, to = 15, by = 3))
-```
-```{r}
 # Draw a rectangle for the key
 key_int <- rbind(
   c(width/2 - key_width/2 + line_thick, 0),
@@ -104,17 +92,10 @@ neck_points <- rbind(
 )
 
 neck <- st_polygon(list(neck_points))
-```
 
-```{r}
 # Define a point sfg object for the center of the hoop
 hoop_center <- st_point(c(width/2, hoop_center_y))
 
-# Check class of hoop_center
-class(hoop_center)
-```
-
-```{r}
 # Interior of the rim
 # Buffer the point by the radius of the hoop to create a circle
 hoop_int <- hoop_center %>%
@@ -131,11 +112,6 @@ hoop <- st_polygon(list(
   st_coordinates(hoop_int)[ , 1:2]
   ))
 
-# Check class of hoop object
-class(hoop)
-```
-
-```{r}
 # Draw the half-circle at the top of the key
 key_center <- st_point(c(width/2, key_height))
 
@@ -173,9 +149,7 @@ half_circle <- st_polygon(list(
   st_coordinates(half_circle_ext)[ , 1:2],
   st_coordinates(half_circle_int)[ , 1:2]
 ))
-```
 
-```{r}
 # Define a point sfg object for the center of the hoop
 three_center <- st_point(c(width/2, hoop_center_y))
 
@@ -218,9 +192,7 @@ three_ext <- rbind(
 
 # Create a three-point line sfg polygon object
 three_point_line <- st_polygon(list(three_int, three_ext))
-```
 
-```{r}
 # Restricted area
 ra_center <- st_point(c(width/2, hoop_center_y))
 
@@ -272,9 +244,7 @@ ra_int <- rbind(
 ra_points <- as.matrix(rbind(ra_ext, ra_int))
 
 restricted_area <- st_polygon(list(ra_points))
-```
 
-```{r}
 # Create sf object with 9 features and 1 field
 court_sf <- st_sf(
   description = c("half_court", "key", "hoop", "backboard",
@@ -286,18 +256,6 @@ court_sf <- st_sf(
            st_geometry(restricted_area))
 )
 
-# Print sf object
-court_sf
-```
-```{r}
-# Plot a funky court with different colors for each feature
-ggplot() +
-  geom_sf(data = court_sf, fill="black") +
-  theme_classic() 
-  #scale_fill_discrete(name = "Feature") +
-  #scale_colour_discrete(guide = FALSE)
-```
-```{r}
 court_themes = list(
   light = list(
     court = '#ffffff',
@@ -318,9 +276,7 @@ court_themes = list(
     hex_border_color = "#000000"
   )
 )
-```
 
-```{r}
 plot_court = function(court_theme = court_themes$light) {
   ggplot() +
     geom_sf(data = court_sf,
@@ -345,9 +301,5 @@ plot_court = function(court_theme = court_themes$light) {
       legend.text = element_text(size = rel(1.0))
     )
 }
-```
 
-```{r}
-plot_court(court_theme = court_themes$light)
 ```
-
