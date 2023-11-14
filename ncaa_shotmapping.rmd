@@ -1,1 +1,364 @@
 
+
+```{r Load the libraries}
+# Load the libraries
+library(sf) # Work with polygons
+library(tidyverse) # ggplot2 and dplyr 
+library(hoopR)
+```
+
+```{r}
+mbb_2021 <- load_mbb_pbp(seasons = 2021)
+```
+
+```{r}
+df <- mbb_2021 |> 
+  filter(type_text == "JumpShot")
+```
+
+```{r}
+# All lengths will be in feet
+line_thick = 0.15
+width = 50
+height = 94 / 2
+key_height = 19
+key_width = 12
+key_radius = 6
+backboard_width = 6
+# https://www.fiba.basketball/documents/BasketballEquipment.pdf
+backboard_thick = 0.3
+backboard_offset = 4
+hoop_radius = 0.75
+hoop_center_y = 5.25
+rim_thick = 0.06
+neck_length = hoop_center_y - (backboard_offset + hoop_radius + rim_thick)
+three_point_radius = 22 + .1458
+three_point_side_offset = 3 + .33 + .01
+three_point_side_height = sqrt(
+  three_point_radius^2 - (three_point_side_offset - width/2)^2
+  ) + hoop_center_y
+restricted_area_radius = 4
+```
+
+```{r}
+# Draw a rectangle that defines the half-court interior
+half_court_int <- rbind(
+  c(0, 0),
+  c(0, height),
+  c(width, height),
+  c(width, 0),
+  c(0,0)
+  )
+
+# Draw a rectangle that defines the half-court exterior
+half_court_ext <- rbind(
+  c(0-line_thick, 0-line_thick),
+  c(0-line_thick, height + line_thick),
+  c(width + line_thick, height + line_thick),
+  c(width + line_thick, 0-line_thick),
+  c(0-line_thick, 0-line_thick)
+  )
+
+# Define a sfg polygon object in sf by subtracting interior from exterior
+half_court <- st_polygon(list(half_court_ext, half_court_int))
+
+# Verify sfg class of polygon
+class(half_court)
+```
+
+```{r}
+# Plot the half-court rectangle to test our object
+ggplot() +
+  geom_sf(data = half_court) +
+  theme_classic() +
+  scale_x_continuous(breaks = seq(from = 0, to = 15, by = 3))
+```
+```{r}
+# Draw a rectangle for the key
+key_int <- rbind(
+  c(width/2 - key_width/2 + line_thick, 0),
+  c(width/2 - key_width/2 + line_thick, key_height - line_thick),
+  c(width/2 + key_width/2 - line_thick, key_height - line_thick),
+  c(width/2 + key_width/2 - line_thick, 0),
+  c(width/2 - key_width/2 + line_thick, 0)
+)
+
+key_ext <- rbind(
+  c(width/2 - key_width/2, 0),
+  c(width/2 - key_width/2, key_height),
+  c(width/2 + key_width/2, key_height),
+  c(width/2 + key_width/2, 0),
+  c(width/2 - key_width/2, 0)
+)
+
+key <- st_polygon(list(key_ext, key_int))
+
+# Draw a rectangle for the backboard
+backboard_points <- rbind(
+  c(width/2 - backboard_width/2, backboard_offset - backboard_thick),
+  c(width/2 - backboard_width/2, backboard_offset),
+  c(width/2 + backboard_width/2, backboard_offset),
+  c(width/2 + backboard_width/2, backboard_offset - backboard_thick),
+  c(width/2 - backboard_width/2, backboard_offset - backboard_thick)
+)
+
+backboard <- st_polygon(list(backboard_points))
+
+# Neck
+neck_points <- rbind(
+  c(width/2 - line_thick/2, backboard_offset),
+  c(width/2 - line_thick/2, backboard_offset + neck_length),
+  c(width/2 + line_thick/2, backboard_offset + neck_length),
+  c(width/2 + line_thick/2, backboard_offset),
+  c(width/2 - line_thick/2, backboard_offset)
+)
+
+neck <- st_polygon(list(neck_points))
+```
+
+```{r}
+# Define a point sfg object for the center of the hoop
+hoop_center <- st_point(c(width/2, hoop_center_y))
+
+# Check class of hoop_center
+class(hoop_center)
+```
+
+```{r}
+# Interior of the rim
+# Buffer the point by the radius of the hoop to create a circle
+hoop_int <- hoop_center %>%
+  st_buffer(dist = hoop_radius)
+
+# Exterior of the rim
+hoop_ext <- hoop_center %>%
+  st_buffer(dist = hoop_radius + rim_thick)
+
+# Subtract interior from exterior to get the rim
+hoop <- st_polygon(list(
+  # Only kepp the X, Y columns of the coordinates
+  st_coordinates(hoop_ext)[ , 1:2],
+  st_coordinates(hoop_int)[ , 1:2]
+  ))
+
+# Check class of hoop object
+class(hoop)
+```
+
+```{r}
+# Draw the half-circle at the top of the key
+key_center <- st_point(c(width/2, key_height))
+
+key_circle_int <- st_crop(
+  st_sfc(st_buffer(key_center, dist = key_radius - line_thick)),
+  # Only keep the part of the circle above the top of the key
+  xmin = 0, ymin = key_height, xmax = width, ymax = height
+  )
+
+key_circle_ext <- st_crop(
+  st_sfc(st_buffer(key_center, dist = key_radius)),
+  xmin = 0, ymin = key_height, xmax = width, ymax = height
+)
+
+key_circle <- st_polygon(list(
+  st_coordinates(key_circle_ext)[ , 1:2],
+  st_coordinates(key_circle_int)[ , 1:2]
+  ))
+
+# Draw the half-circle at the bottom of half-court
+half_center <- st_point(c(width/2, height))
+
+half_circle_int <- st_crop(
+  st_sfc(st_buffer(half_center, dist = key_radius - line_thick)),
+  # only keep the bottom half below the half-court line
+  xmin = 0, ymin = 0, xmax = width, ymax = height
+)
+
+half_circle_ext <- st_crop(
+  st_sfc(st_buffer(half_center, dist = key_radius)),
+  xmin = 0, ymin = 0, xmax = width, ymax = height
+)
+
+half_circle <- st_polygon(list(
+  st_coordinates(half_circle_ext)[ , 1:2],
+  st_coordinates(half_circle_int)[ , 1:2]
+))
+```
+
+```{r}
+# Define a point sfg object for the center of the hoop
+three_center <- st_point(c(width/2, hoop_center_y))
+
+# Buffer the point to create a circle & crop it at 2.99 meters
+three_int <- st_crop(
+  st_sfc(st_buffer(three_center, dist = three_point_radius - line_thick)),
+  xmin = three_point_side_offset + line_thick, ymin = three_point_side_height,
+  xmax = width - (three_point_side_offset + line_thick), ymax = height
+)
+
+# Get the number of rows of coordinates of the three_int object
+n <- nrow(st_coordinates(three_int))
+
+# Bind the straight line points to the arc
+three_int <- rbind(
+  c(three_point_side_offset + line_thick, 0),
+  c(three_point_side_offset + line_thick, three_point_side_height),
+  # Remove the last two rows and only keep the X,Y columns
+  st_coordinates(three_int)[1:(n-2), 1:2],
+  c(width - (three_point_side_offset + line_thick), three_point_side_height),
+  c(width - (three_point_side_offset + line_thick), 0),
+  c(three_point_side_offset + line_thick, 0)
+)
+
+# Do the same for the exterior
+three_ext <- st_crop(
+  st_sfc(st_buffer(three_center, dist = three_point_radius)),
+  xmin = three_point_side_offset, ymin = three_point_side_height,
+  xmax = width - three_point_side_offset, ymax = height
+)
+
+three_ext <- rbind(
+  c(three_point_side_offset, 0),
+  c(three_point_side_offset, three_point_side_height),
+  st_coordinates(three_ext)[1:(n-2), 1:2],
+  c(width - three_point_side_offset, three_point_side_height),
+  c(width - three_point_side_offset, 0),
+  c(three_point_side_offset, 0)
+)
+
+# Create a three-point line sfg polygon object
+three_point_line <- st_polygon(list(three_int, three_ext))
+```
+
+```{r}
+# Restricted area
+ra_center <- st_point(c(width/2, hoop_center_y))
+
+ra_ext <- st_crop(
+  st_sfc(st_buffer(ra_center, dist = restricted_area_radius + line_thick)),
+  xmin = 0, ymin = hoop_center_y,
+  xmax = width, ymax = height
+)
+
+n <- nrow(st_coordinates(ra_ext))
+
+ra_ext <- tibble(
+  x = st_coordinates(ra_ext)[1:(n-2), 1],
+  y = st_coordinates(ra_ext)[1:(n-2), 2]
+)
+
+
+ra_ext <- rbind(
+  c(width/2 - restricted_area_radius - line_thick, backboard_offset),
+  c(width/2 - restricted_area_radius - line_thick, hoop_center_y),
+  ra_ext,
+  c(width/2 + restricted_area_radius + line_thick, hoop_center_y),
+  c(width/2 + restricted_area_radius + line_thick, backboard_offset)
+)
+
+ra_int <- st_crop(
+  st_sfc(st_buffer(ra_center, dist = restricted_area_radius)),
+  xmin = 0, ymin = hoop_center_y,
+  xmax = width, ymax = height
+)
+
+# Reverse the direction of the interior arc points
+ra_int_flip <- tibble(
+  x = st_coordinates(ra_int)[1:(n-2), 1],
+  y = st_coordinates(ra_int)[1:(n-2), 2]
+) %>%
+  arrange(desc(x))
+
+ra_int <- rbind(
+  c(width/2 + restricted_area_radius, backboard_offset),
+  c(width/2 + restricted_area_radius, hoop_center_y),
+  ra_int_flip,
+  c(width/2 - restricted_area_radius, hoop_center_y),
+  c(width/2 - restricted_area_radius, backboard_offset),
+  c(width/2 - restricted_area_radius - line_thick, backboard_offset)
+)
+
+# Bind all the points together
+ra_points <- as.matrix(rbind(ra_ext, ra_int))
+
+restricted_area <- st_polygon(list(ra_points))
+```
+
+```{r}
+# Create sf object with 9 features and 1 field
+court_sf <- st_sf(
+  description = c("half_court", "key", "hoop", "backboard",
+                  "neck", "key_circle", "three_point_line",
+                  "half_circle", "restricted_area"), 
+  geom = c(st_geometry(half_court), st_geometry(key), st_geometry(hoop),
+           st_geometry(backboard), st_geometry(neck), st_geometry(key_circle), 
+           st_geometry(three_point_line), st_geometry(half_circle),
+           st_geometry(restricted_area))
+)
+
+# Print sf object
+court_sf
+```
+```{r}
+# Plot a funky court with different colors for each feature
+ggplot() +
+  geom_sf(data = court_sf, fill="black") +
+  theme_classic() 
+  #scale_fill_discrete(name = "Feature") +
+  #scale_colour_discrete(guide = FALSE)
+```
+```{r}
+court_themes = list(
+  light = list(
+    court = '#ffffff',
+    lines = '#000000',
+    text = '#222222',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0.3,
+    hex_border_color = "#cccccc"
+  ),
+  dark = list(
+    court = '#000004',
+    lines = '#ffffff',
+    text = '#f0f0f0',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0,
+    hex_border_color = "#000000"
+  )
+)
+```
+
+```{r}
+plot_court = function(court_theme = court_themes$light) {
+  ggplot() +
+    geom_sf(data = court_sf,
+            fill = court_theme$lines, col = court_theme$lines) +
+    theme_void() +
+    theme(
+      text = element_text(color = court_theme$text),
+      plot.background = element_rect(
+        fill = court_theme$court, color = court_theme$court),
+      panel.background = element_rect(
+        fill = court_theme$court, color = court_theme$court),
+      panel.grid = element_blank(),
+      panel.border = element_blank(),
+      axis.text = element_blank(),
+      axis.title = element_blank(),
+      axis.ticks = element_blank(),
+      legend.background = element_rect(
+        fill = court_theme$court, color = court_theme$court),
+      legend.margin = margin(-1, 0, 0, 0, unit = "lines"),
+      legend.position = "bottom",
+      legend.key = element_blank(),
+      legend.text = element_text(size = rel(1.0))
+    )
+}
+```
+
+```{r}
+plot_court(court_theme = court_themes$light)
+```
+
+
