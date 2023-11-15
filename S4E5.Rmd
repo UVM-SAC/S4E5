@@ -1,0 +1,853 @@
+---
+title: "S4E5"
+author: "UVM SAC"
+date: "2023-11-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.align = "center")
+```
+
+## S4E5 - Basketball Data Visualization
+
+In this weeks workshop, we're going to be working with R using an R markdown file, which combines markdown(formatted text like this one) and code chunks. Hopefully everyone can get their own R environment set up so that anyone can experiment with the data and make their own charts.
+
+The package we're working with today is called hoopR
+```{r package_setup}
+# installing the package
+#install.packages("hoopR")
+#install.packages("sf")
+# initializing the package for this R session
+library(hoopR)
+library(tidyverse)
+library(sf)
+```
+
+hoopR is an open source package that contains up to date NBA and NCAA play-by-play data
+
+```{r loading_data}
+# load in the ncaa play-by-play
+# data from 2006-2023
+
+# its a large dataset, so it may take a while to run
+ncaa_pbp <- load_mbb_pbp(seasons = 2023)
+
+shot_types = c("DunkShot", "JumpShot", "LayUpShot", "TipShot")
+```
+
+```{r}
+# plotting shot chart for one team in one game
+
+ncaa_pbp |> 
+  filter(game_id == 401522202,#2023 national championship
+         type_text %in% shot_types) |> 
+  ggplot(
+    mapping = aes(
+      x = coordinate_x,
+      y = coordinate_y
+    )
+  ) + 
+  geom_point(
+    mapping = aes(
+      color = factor(score_value),
+      shape = scoring_play
+    ),
+    size = 2
+  ) + 
+  scale_shape_manual(
+    values = c(4, 16)
+  ) + coord_fixed()
+# home team is on the right, away on the left
+```
+
+
+Lets try adding the lines on the court to better make sense of the data
+
+Below will be a lot of code that uses spacial objects to create to-scale lines for an NCAA court. The final result will be a theme that we can add to our shot chart graph that draws in the lines with only one line of code.
+
+```{r}
+library(sf) # Work with polygons
+
+# All lengths will be in feet
+line_thick = 0.15
+width = 50
+height = 94 / 2
+key_height = 19
+key_width = 12
+key_radius = 6
+backboard_width = 6
+# https://www.fiba.basketball/documents/BasketballEquipment.pdf
+backboard_thick = 0.3
+backboard_offset = 4
+hoop_radius = 0.75
+hoop_center_y = 5.25
+rim_thick = 0.06
+neck_length = hoop_center_y - (backboard_offset + hoop_radius + rim_thick)
+three_point_radius = 22 + .1458
+three_point_side_offset = 3 + .33 + .01
+three_point_side_height = sqrt(
+  three_point_radius^2 - (three_point_side_offset - width/2)^2
+  ) + hoop_center_y
+restricted_area_radius = 4
+
+# Draw a rectangle that defines the half-court interior
+half_court_int <- rbind(
+  c(0, 0),
+  c(0, height),
+  c(width, height),
+  c(width, 0),
+  c(0,0)
+  )
+
+# Draw a rectangle that defines the half-court exterior
+half_court_ext <- rbind(
+  c(0-line_thick, 0-line_thick),
+  c(0-line_thick, height + line_thick),
+  c(width + line_thick, height + line_thick),
+  c(width + line_thick, 0-line_thick),
+  c(0-line_thick, 0-line_thick)
+  )
+
+# Define a sfg polygon object in sf by subtracting interior from exterior
+half_court <- st_polygon(list(half_court_ext, half_court_int))
+
+
+# Draw a rectangle for the key
+key_int <- rbind(
+  c(width/2 - key_width/2 + line_thick, 0),
+  c(width/2 - key_width/2 + line_thick, key_height - line_thick),
+  c(width/2 + key_width/2 - line_thick, key_height - line_thick),
+  c(width/2 + key_width/2 - line_thick, 0),
+  c(width/2 - key_width/2 + line_thick, 0)
+)
+
+key_ext <- rbind(
+  c(width/2 - key_width/2, 0),
+  c(width/2 - key_width/2, key_height),
+  c(width/2 + key_width/2, key_height),
+  c(width/2 + key_width/2, 0),
+  c(width/2 - key_width/2, 0)
+)
+
+key <- st_polygon(list(key_ext, key_int))
+
+# Draw a rectangle for the backboard
+backboard_points <- rbind(
+  c(width/2 - backboard_width/2, backboard_offset - backboard_thick),
+  c(width/2 - backboard_width/2, backboard_offset),
+  c(width/2 + backboard_width/2, backboard_offset),
+  c(width/2 + backboard_width/2, backboard_offset - backboard_thick),
+  c(width/2 - backboard_width/2, backboard_offset - backboard_thick)
+)
+
+backboard <- st_polygon(list(backboard_points))
+
+# Neck
+neck_points <- rbind(
+  c(width/2 - line_thick/2, backboard_offset),
+  c(width/2 - line_thick/2, backboard_offset + neck_length),
+  c(width/2 + line_thick/2, backboard_offset + neck_length),
+  c(width/2 + line_thick/2, backboard_offset),
+  c(width/2 - line_thick/2, backboard_offset)
+)
+
+neck <- st_polygon(list(neck_points))
+
+# Define a point sfg object for the center of the hoop
+hoop_center <- st_point(c(width/2, hoop_center_y))
+
+# Interior of the rim
+# Buffer the point by the radius of the hoop to create a circle
+hoop_int <- hoop_center %>%
+  st_buffer(dist = hoop_radius)
+
+# Exterior of the rim
+hoop_ext <- hoop_center %>%
+  st_buffer(dist = hoop_radius + rim_thick)
+
+# Subtract interior from exterior to get the rim
+hoop <- st_polygon(list(
+  # Only kepp the X, Y columns of the coordinates
+  st_coordinates(hoop_ext)[ , 1:2],
+  st_coordinates(hoop_int)[ , 1:2]
+  ))
+
+# Draw the half-circle at the top of the key
+key_center <- st_point(c(width/2, key_height))
+
+key_circle_int <- st_crop(
+  st_sfc(st_buffer(key_center, dist = key_radius - line_thick)),
+  # Only keep the part of the circle above the top of the key
+  xmin = 0, ymin = key_height, xmax = width, ymax = height
+  )
+
+key_circle_ext <- st_crop(
+  st_sfc(st_buffer(key_center, dist = key_radius)),
+  xmin = 0, ymin = key_height, xmax = width, ymax = height
+)
+
+key_circle <- st_polygon(list(
+  st_coordinates(key_circle_ext)[ , 1:2],
+  st_coordinates(key_circle_int)[ , 1:2]
+  ))
+
+# Draw the half-circle at the bottom of half-court
+half_center <- st_point(c(width/2, height))
+
+half_circle_int <- st_crop(
+  st_sfc(st_buffer(half_center, dist = key_radius - line_thick)),
+  # only keep the bottom half below the half-court line
+  xmin = 0, ymin = 0, xmax = width, ymax = height
+)
+
+half_circle_ext <- st_crop(
+  st_sfc(st_buffer(half_center, dist = key_radius)),
+  xmin = 0, ymin = 0, xmax = width, ymax = height
+)
+
+half_circle <- st_polygon(list(
+  st_coordinates(half_circle_ext)[ , 1:2],
+  st_coordinates(half_circle_int)[ , 1:2]
+))
+
+# Define a point sfg object for the center of the hoop
+three_center <- st_point(c(width/2, hoop_center_y))
+
+# Buffer the point to create a circle & crop it at 2.99 meters
+three_int <- st_crop(
+  st_sfc(st_buffer(three_center, dist = three_point_radius - line_thick)),
+  xmin = three_point_side_offset + line_thick, ymin = three_point_side_height,
+  xmax = width - (three_point_side_offset + line_thick), ymax = height
+)
+
+# Get the number of rows of coordinates of the three_int object
+n <- nrow(st_coordinates(three_int))
+
+# Bind the straight line points to the arc
+three_int <- rbind(
+  c(three_point_side_offset + line_thick, 0),
+  c(three_point_side_offset + line_thick, three_point_side_height),
+  # Remove the last two rows and only keep the X,Y columns
+  st_coordinates(three_int)[1:(n-2), 1:2],
+  c(width - (three_point_side_offset + line_thick), three_point_side_height),
+  c(width - (three_point_side_offset + line_thick), 0),
+  c(three_point_side_offset + line_thick, 0)
+)
+
+# Do the same for the exterior
+three_ext <- st_crop(
+  st_sfc(st_buffer(three_center, dist = three_point_radius)),
+  xmin = three_point_side_offset, ymin = three_point_side_height,
+  xmax = width - three_point_side_offset, ymax = height
+)
+
+three_ext <- rbind(
+  c(three_point_side_offset, 0),
+  c(three_point_side_offset, three_point_side_height),
+  st_coordinates(three_ext)[1:(n-2), 1:2],
+  c(width - three_point_side_offset, three_point_side_height),
+  c(width - three_point_side_offset, 0),
+  c(three_point_side_offset, 0)
+)
+
+# Create a three-point line sfg polygon object
+three_point_line <- st_polygon(list(three_int, three_ext))
+
+# Restricted area
+ra_center <- st_point(c(width/2, hoop_center_y))
+
+ra_ext <- st_crop(
+  st_sfc(st_buffer(ra_center, dist = restricted_area_radius + line_thick)),
+  xmin = 0, ymin = hoop_center_y,
+  xmax = width, ymax = height
+)
+
+n <- nrow(st_coordinates(ra_ext))
+
+ra_ext <- tibble(
+  x = st_coordinates(ra_ext)[1:(n-2), 1],
+  y = st_coordinates(ra_ext)[1:(n-2), 2]
+)
+
+
+ra_ext <- rbind(
+  c(width/2 - restricted_area_radius - line_thick, backboard_offset),
+  c(width/2 - restricted_area_radius - line_thick, hoop_center_y),
+  ra_ext,
+  c(width/2 + restricted_area_radius + line_thick, hoop_center_y),
+  c(width/2 + restricted_area_radius + line_thick, backboard_offset)
+)
+
+ra_int <- st_crop(
+  st_sfc(st_buffer(ra_center, dist = restricted_area_radius)),
+  xmin = 0, ymin = hoop_center_y,
+  xmax = width, ymax = height
+)
+
+# Reverse the direction of the interior arc points
+ra_int_flip <- tibble(
+  x = st_coordinates(ra_int)[1:(n-2), 1],
+  y = st_coordinates(ra_int)[1:(n-2), 2]
+) %>%
+  arrange(desc(x))
+
+ra_int <- rbind(
+  c(width/2 + restricted_area_radius, backboard_offset),
+  c(width/2 + restricted_area_radius, hoop_center_y),
+  ra_int_flip,
+  c(width/2 - restricted_area_radius, hoop_center_y),
+  c(width/2 - restricted_area_radius, backboard_offset),
+  c(width/2 - restricted_area_radius - line_thick, backboard_offset)
+)
+
+# Bind all the points together
+ra_points <- as.matrix(rbind(ra_ext, ra_int))
+
+restricted_area <- st_polygon(list(ra_points))
+
+# Create sf object with 9 features and 1 field
+court_sf <- st_sf(
+  description = c("half_court", "key", "hoop", "backboard",
+                  "neck", "key_circle", "three_point_line",
+                  "half_circle", "restricted_area"), 
+  geom = c(st_geometry(half_court), st_geometry(key), st_geometry(hoop),
+           st_geometry(backboard), st_geometry(neck), st_geometry(key_circle), 
+           st_geometry(three_point_line), st_geometry(half_circle),
+           st_geometry(restricted_area))
+)
+
+court_themes = list(
+  light = list(
+    court = '#ffffff',
+    lines = '#000000',
+    text = '#222222',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0.3,
+    hex_border_color = "#cccccc"
+  ),
+  dark = list(
+    court = '#000004',
+    lines = '#ffffff',
+    text = '#f0f0f0',
+    made = '#00bfc4',
+    missed = '#f8766d',
+    hex_border_size = 0,
+    hex_border_color = "#000000"
+  )
+)
+
+plot_court = function(court_theme = court_themes$light) {
+    ggplot() + 
+    geom_sf(data = court_sf,
+            fill = court_theme$lines, col = court_theme$lines) +
+    theme_void() +
+    theme(
+      text = element_text(color = court_theme$text),
+      plot.background = element_rect(
+        fill = court_theme$court, color = court_theme$court),
+      panel.background = element_rect(
+        fill = court_theme$court, color = court_theme$court),
+      panel.grid = element_blank(),
+      panel.border = element_blank(),
+      axis.text = element_blank(),
+      axis.title = element_blank(),
+      axis.ticks = element_blank(),
+      legend.background = element_rect(
+        fill = court_theme$court, color = court_theme$court),
+      legend.margin = margin(-1, 0, 0, 0, unit = "lines"),
+      legend.position = "bottom",
+      legend.key = element_blank(),
+      legend.text = element_text(size = rel(1.0))
+    )
+}
+```
+
+Implementing the court lines:
+We will have to make some changes to the graph to align with the theme. For the court lines, (0,0) is in the bottom left corner. In our previous graph (0, 0) is mid court. Also, with the court theme we only want to look at one team at a time. Also, for the theme, the x and y axes are going to be flipped.
+```{r}
+plot_court()
+```
+
+Adding shot charts to plot_court()
+```{r}
+ncaa_pbp |> 
+  filter(
+         team_id == 41, # UConn
+         type_text %in% shot_types) -> uconn_data
+
+plot_court() +
+  geom_point(
+    data = uconn_data,
+    mapping = aes(
+      color = factor(score_value), 
+      x = coordinate_y + 25, # adjusts for different coordinates
+      y = -1 * abs(coordinate_x) + 47, # Uses correct coordinate system and all shots are on the same half
+      shape = scoring_play
+    ),
+    size = 2
+  ) + 
+  scale_shape_manual(
+    values = c(4, 16),
+    labels = c("Miss", "Make")
+  ) + 
+  theme(legend.position = "right") + 
+  labs(title = "2023 UConn Huskies Shot Chart",
+       shape = NULL,
+       color = NULL)
+
+
+```
+
+The data gets hard to read when you want to look at an entire season's worth of shots. To solve this we can try segmenting the court and look at shooting statistics for each zone.
+
+```{r}
+key_ext <- rbind(
+  c(width/2 - key_width/2, 0),
+  c(width/2 - key_width/2, key_height),
+  c(width/2 + key_width/2, key_height),
+  c(width/2 + key_width/2, 0),
+  c(width/2 - key_width/2, 0)
+)
+
+three_ext <- st_crop(
+  st_sfc(st_buffer(three_center, dist = three_point_radius)),
+  xmin = three_point_side_offset, ymin = three_point_side_height,
+  xmax = width - three_point_side_offset, ymax = height
+)
+n <- dim(st_coordinates(three_ext))[1]
+
+
+# Left Corner 3
+left_corner_three <- rbind(
+  c(width - three_point_side_offset, 0),
+  c(width - three_point_side_offset, three_point_side_height),
+  c(width, three_point_side_height),
+  c(width, 0),
+  c(width - three_point_side_offset, 0)
+)
+
+left_corner_three <- st_polygon(list(left_corner_three))
+
+# Right Corner 3
+right_corner_three <- rbind(
+  c(0, 0),
+  c(0, three_point_side_height),
+  c(three_point_side_offset, three_point_side_height),
+  c(three_point_side_offset, 0),
+  c(0, 0)
+)
+
+right_corner_three <- st_polygon(list(right_corner_three))
+
+# Mid-Range Left
+three_ext <- tibble(
+  x = st_coordinates(three_ext)[1:(n-2), 1],
+  y = st_coordinates(three_ext)[1:(n-2), 2]
+)
+
+mid_range_left <- rbind(
+  c(three_point_side_offset, three_point_side_height),
+  filter(three_ext, x <= (width/2 - key_width/2) + 1),
+  c(width/2 - key_width/2, key_height),
+  c(width/2 - key_width/2, three_point_side_height),
+  c(three_point_side_offset, three_point_side_height)
+)
+
+mid_range_left <- st_polygon(list(as.matrix(mid_range_left)))
+
+
+# Mid-Range Right
+
+mid_range_right <- rbind(
+  c(width - three_point_side_offset, three_point_side_height),
+  arrange(filter(three_ext, x >= (width/2 + key_width/2) - 1), desc(x)),
+  c(width/2 + key_width/2, key_height),
+  c(width/2 + key_width/2, three_point_side_height),
+  c(width - three_point_side_offset, three_point_side_height)
+)
+
+mid_range_right <- st_polygon(list(as.matrix(mid_range_right)))
+
+
+# Mid-Range center
+
+mid_range_center <- rbind(
+  c(width/2 - key_width/2, key_height),
+  filter(three_ext, x >= (width/2 - key_width/2 ), x <= (width/2 + key_width/2)),
+  c(width/2 + key_width/2, key_height),
+  c(width/2 - key_width/2, key_height)
+)
+
+mid_range_center <- st_polygon(list(as.matrix(mid_range_center)))
+
+
+# Right Block
+right_block <- rbind(
+  c(width/2 + key_width/2, 0),
+  c(width/2 + key_width/2, three_point_side_height),
+  c(width - three_point_side_offset, three_point_side_height),
+  c(width - three_point_side_offset, 0),
+  c(width/2 + key_width/2, 0)
+)
+
+right_block <- st_polygon(list(as.matrix(right_block)))
+
+# left Block
+left_block <- rbind(
+  c(width/2 - key_width/2, 0),
+  c(width/2 - key_width/2, three_point_side_height),
+  c(three_point_side_offset, three_point_side_height),
+  c(three_point_side_offset, 0),
+  c(width/2 - key_width/2, 0)
+)
+
+left_block <- st_polygon(list(as.matrix(left_block)))
+
+# Restricted Area
+ra_ext <- rbind(
+  ra_ext,
+  c(width/2 - restricted_area_radius - line_thick, backboard_offset)
+)
+
+restricted_area <- st_polygon(list(as.matrix(ra_ext)))
+
+# In The Paint (Non-RA)
+key_ext <- st_polygon(list(key_ext))
+
+paint <- st_difference(key_ext, restricted_area)
+
+
+
+
+deep_three_arc <- st_crop(
+  st_sfc(st_buffer(three_center, dist = three_point_radius + 5)),
+  xmin = 0, ymin = key_height - (key_height - three_point_side_height)/2,
+  xmax = width, ymax = height
+)
+
+# Get the number of rows of coordinates of the three_int object
+n <- nrow(st_coordinates(deep_three_arc))
+
+# Bind the straight line points to the arc
+
+#deep_three <- rbind(
+#  c(0, key_height - (key_height - three_point_side_height)/2),
+#  # Remove the last two rows and only keep the X,Y columns
+#  st_coordinates(deep_three)[1:(n-2), 1:2],
+#  c(width, key_height - (key_height - three_point_side_height)/2),
+#  c(0, key_height - (key_height - three_point_side_height)/2)
+#)
+
+deep_three_arc <- tibble(
+  x = st_coordinates(deep_three_arc)[1:(n-2), 1],
+  y = st_coordinates(deep_three_arc)[1:(n-2), 2]
+)
+
+
+
+# regular three
+three_left <- rbind(
+  c(0, three_point_side_height),
+  arrange(filter(deep_three_arc, x <= (width/2 - key_width/2)*.65), x),
+  arrange(filter(three_ext, x <= (width/2 - key_width/2)*.75), desc(x)),
+  c(three_point_side_offset, three_point_side_height),
+  c(0, three_point_side_height)
+)
+
+three_left <- st_polygon(list(as.matrix(three_left)))
+
+three_middle <- rbind(
+  arrange(filter(deep_three_arc, x >= (width/2 - key_width/2)*.6, x <= (width/2 + key_width/2) + .4*(width - (width/2 + key_width/2))), x),
+  arrange(filter(three_ext, x >= (width/2 - key_width/2)*.7, x <= (width/2 + key_width/2) + .3*(width - (width/2 + key_width/2))), desc(x)),
+  arrange(filter(deep_three_arc, x >= (width/2 - key_width/2)*.6), x)[1,]
+)
+
+three_middle <- st_polygon(list(as.matrix(three_middle)))
+
+
+three_right <- rbind(
+  c(width, three_point_side_height),
+  arrange(filter(deep_three_arc, x >= (width/2 + key_width/2) + .35*(width - (width/2 + key_width/2))), desc(x)),
+  arrange(filter(three_ext, x >= (width/2 + key_width/2) + .25*(width - (width/2 + key_width/2))), x),
+  c(width - three_point_side_offset, three_point_side_height),
+  c(width, three_point_side_height)
+)
+
+three_right <- st_polygon(list(as.matrix(three_right)))
+
+
+deep_three <- rbind(
+  arrange(deep_three_arc, x),
+  c(width, height),
+  c(0, height),
+  arrange(deep_three_arc, x)[1,]
+)
+
+deep_three <- st_polygon(list(as.matrix(deep_three)))
+
+
+
+basic_polys <- st_sf(
+  description = c(
+    "Left 3", 
+    "Middle 3",
+    "Right 3",
+    "Deep 3",
+    "Left Corner 3", 
+    "Right Corner 3",
+    "Mid-Range Left", 
+    "Mid-Range Right",
+    "Restricted Area", 
+    "In The Paint (Non-RA)",
+    "Right Block",
+    "Left Block",
+    "Mid-Range Center"
+  ), 
+  geom = c(
+    st_geometry(three_left),
+    st_geometry(three_middle),
+    st_geometry(three_right),
+    st_geometry(deep_three),
+    st_geometry(left_corner_three),
+    st_geometry(right_corner_three),
+    st_geometry(mid_range_left),
+    st_geometry(mid_range_right),
+    st_geometry(restricted_area),
+    st_geometry(paint),
+    st_geometry(right_block),
+    st_geometry(left_block),
+    st_geometry(mid_range_center)
+  )
+) %>%
+  transmute(
+    shot_zone_basic = description,
+    geom
+  )
+
+plot_court() +
+  geom_sf(data = basic_polys,  
+          aes(fill = shot_zone_basic),
+          alpha = 0.2,
+          show.legend = F) 
+
+```
+
+Lets take the shot data from uconn's games and see how they shot in each zone
+```{r}
+uconn_data |> 
+  select(game_id, scoring_play, score_value, coordinate_x, coordinate_y) -> uconn_data
+
+
+
+# adjust shot data to fit the correct coord system
+uconn_shot_data <- uconn_data |> 
+  mutate(coordinate_x = -1 * abs(coordinate_x) + 47,
+         coordinate_y = coordinate_y + 25)
+
+uconn_shots <- st_as_sf(filter(uconn_shot_data, !is.na(coordinate_x)), coords = c("coordinate_y", "coordinate_x")) 
+
+
+
+
+st_join(x = uconn_shots,
+        y = basic_polys) |> filter(!is.na(shot_zone_basic)) |> tibble() |> 
+  group_by(
+    shot_zone_basic
+  ) |> 
+  summarize(
+    num_shots = n(),
+    num_makes = sum(scoring_play),
+  ) |> 
+  mutate(
+    percentage = num_makes / num_shots
+  ) |> 
+  ungroup() -> zones_df
+
+
+left_join(zones_df,
+          basic_polys,
+          by = "shot_zone_basic") -> zone_data
+
+zone_data
+```
+
+``` {r}
+plot_court() +
+  geom_sf(data = st_sf(zone_data),  
+          aes(fill = percentage),
+          color = "white",
+          linewidth = .6) + 
+  labs(title = "2023 UConn Shooting by Zone (18 game sample size)") + 
+  scale_fill_viridis_c() + 
+  geom_sf_text(
+    data = st_sf(zone_data),
+    mapping = aes(label = round(percentage, digits = 2))
+  )
+```
+
+
+## Putting it all together
+
+```{r}
+# Looking at 2023 shot chart data for our very own UVM catamounts
+
+# filtering out UVM games with no shot location data
+ncaa_pbp |> 
+  filter(away_team_abbrev == "UVM" | home_team_abbrev == "UVM") |> 
+  filter(
+    type_text %in% shot_types,
+    !is.na(coordinate_x)
+  ) |> 
+  select(game_id, scoring_play, score_value, coordinate_x, coordinate_y) |> 
+  mutate(coordinate_x = -1 * abs(coordinate_x) + 47,
+         coordinate_y = coordinate_y + 25) -> UVM_shots 
+# 216 shots to work with
+
+
+# plot the misses and makes on the court
+plot_court() +
+  geom_point(
+    data = UVM_shots,
+    mapping = aes(
+      color = factor(score_value), 
+      x = coordinate_y,
+      y = coordinate_x, 
+      shape = scoring_play
+    ),
+    size = 2
+  ) + 
+  scale_shape_manual(
+    values = c(4, 16),
+    labels = c("Miss", "Make")
+  ) + 
+  theme(legend.position = "right") + 
+  labs(title = "2023 Vermont Catamounts Shot Chart",
+       shape = NULL,
+       color = NULL)
+
+# see how they did in each zone
+
+# get data into the right format for the graph
+UVM_shots_sf <- st_as_sf(UVM_shots, coords = c("coordinate_y", "coordinate_x")) 
+
+
+st_join(x = UVM_shots_sf,
+        y = basic_polys) |> filter(!is.na(shot_zone_basic)) |> 
+  tibble() |> 
+  group_by(
+    shot_zone_basic
+  ) |> 
+  summarize(
+    num_shots = n(),
+    num_makes = sum(scoring_play),
+  ) |> 
+  mutate(
+    percentage = num_makes / num_shots
+  ) |> 
+  ungroup() -> uvm_zones_df
+
+
+left_join(uvm_zones_df,
+          basic_polys,
+          by = "shot_zone_basic") -> uvm_zones_polygons
+
+
+
+plot_court() +
+  geom_sf(data = st_sf(uvm_zones_polygons),  
+          aes(fill = percentage),
+          color = "white",
+          linewidth = .6) + 
+  labs(title = "2023 UVM Shooting by Zone") + 
+  scale_fill_viridis_c() + 
+  geom_sf_text(
+    data = st_sf(uvm_zones_polygons),
+    mapping = aes(label = round(percentage, digits = 2))
+  )
+```
+Try it yourself!!
+
+
+
+```{r}
+# change this team name to be any school you're curious about!
+team_name = ""
+
+ncaa_pbp |> 
+  filter(away_team_name == team_name | home_team_name == team_name) |> 
+  filter(
+    type_text %in% shot_types,
+    !is.na(coordinate_x)
+  ) |> 
+  select(game_id, scoring_play, score_value, coordinate_x, coordinate_y) |> 
+  mutate(coordinate_x = -1 * abs(coordinate_x) + 47,
+         coordinate_y = coordinate_y + 25) -> custom_shots 
+# 216 shots to work with
+
+
+# plot the misses and makes on the court
+plot_court() +
+  geom_point(
+    data = custom_shots,
+    mapping = aes(
+      color = factor(score_value), 
+      x = coordinate_y,
+      y = coordinate_x, 
+      shape = scoring_play
+    ),
+    size = 2
+  ) + 
+  scale_shape_manual(
+    values = c(4, 16),
+    labels = c("Miss", "Make")
+  ) + 
+  theme(legend.position = "right") + 
+  labs(title = paste("2023", team_name, "Shot Chart"),
+       shape = NULL,
+       color = NULL)
+
+# see how they did in each zone
+
+# get data into the right format for the graph
+custom_shots_sf <- st_as_sf(custom_shots, coords = c("coordinate_y", "coordinate_x")) 
+
+
+st_join(x = custom_shots_sf,
+        y = basic_polys) |> filter(!is.na(shot_zone_basic)) |> 
+  tibble() |> 
+  group_by(
+    shot_zone_basic
+  ) |> 
+  summarize(
+    num_shots = n(),
+    num_makes = sum(scoring_play),
+  ) |> 
+  mutate(
+    percentage = num_makes / num_shots
+  ) |> 
+  ungroup() -> custom_zones_df
+
+
+left_join(custom_zones_df,
+          basic_polys,
+          by = "shot_zone_basic") -> custom_zones_polygons
+
+
+
+plot_court() +
+  geom_sf(data = st_sf(custom_zones_polygons),  
+          aes(fill = percentage),
+          color = "white",
+          linewidth = .6) + 
+  labs(title = paste("2023", team_name, "Shooting by Zone")) + 
+  scale_fill_viridis_c() + 
+  geom_sf_text(
+    data = st_sf(custom_zones_polygons),
+    mapping = aes(label = round(percentage, digits = 2))
+  )
+
+
+```
